@@ -71,6 +71,8 @@ public class AppConfig
     /// <summary>What to do when a scenario's default preset differs from current settings: ask | auto | off.</summary>
     public string PresetMode { get; set; } = "ask";
     public bool TagThumbNames { get; set; } = true;
+    /// <summary>On launch, send media files nothing uses any more to the Recycle Bin (App Settings → Data).</summary>
+    public bool AutoCleanMedia { get; set; }
 
     /// <summary>Resuming from the pause bar: "restart" (press the restart key for you) or "continue".</summary>
     public string PauseResume { get; set; } = "restart";

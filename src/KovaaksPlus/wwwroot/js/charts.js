@@ -22,7 +22,9 @@ const shortNum = (v) => Math.abs(v) >= 10000 ? (v / 1000).toFixed(0) + 'k' : Mat
 
 /**
  * series: [{ points: [{x, y, tip?, pb?}], color, width, dashed, area, dots }]
- * opts: { height, yFormat, hLines: [{y, label, color}], highlight: {series, index}, xLabels: fn(x) }
+ * opts: { height, yFormat, hLines: [{y, label, color, align: 'start'|'end', solid, icon}], bands: [{from, to, color}],
+ *         highlight: {series, index}, xLabels: fn(x) }
+ * hLines and bands widen the y-range, so pass only the ones worth showing.
  */
 export function lineChart(container, series, opts = {}) {
   const height = opts.height || 220;
@@ -67,6 +69,13 @@ export function lineChart(container, series, opts = {}) {
     }
     svg.append(axis);
 
+    // Background bands (e.g. benchmark rank zones), clipped to the plot.
+    for (const bd of opts.bands || []) {
+      const y1 = Y(Math.min(hi, bd.to == null ? hi : bd.to)), y2 = Y(Math.max(lo, bd.from == null ? lo : bd.from));
+      if (y2 - y1 <= 0) continue;
+      svg.append(s('rect', { x: pad.l, y: y1, width: width - pad.l - pad.r, height: y2 - y1, fill: bd.color, opacity: bd.opacity || 0.07 }));
+    }
+
     series.forEach((sr) => {
       if (!sr.points.length) return;
       const pts = sr.points.map((p) => [X(p.x), Y(p.y)]);
@@ -88,9 +97,18 @@ export function lineChart(container, series, opts = {}) {
     });
 
     for (const l of opts.hLines || []) {
-      svg.append(s('line', { x1: pad.l, x2: width - pad.r, y1: Y(l.y), y2: Y(l.y), stroke: l.color || '#fbbf24', 'stroke-dasharray': '6 5', 'stroke-width': 1.2, opacity: .8 }));
+      const c = l.color || '#fbbf24';
+      svg.append(s('line', { x1: pad.l, x2: width - pad.r, y1: Y(l.y), y2: Y(l.y), stroke: c, 'stroke-dasharray': l.solid ? '' : '6 5', 'stroke-width': l.solid ? 1 : 1.2, opacity: l.solid ? .55 : .8 }));
       if (l.label) {
-        const tx = s('text', { x: width - pad.r - 4, y: Y(l.y) - 5, 'text-anchor': 'end', fill: l.color || '#fbbf24', 'font-size': 11, 'font-weight': 600 });
+        const start = l.align === 'start';
+        let x = start ? pad.l + 6 : width - pad.r - 4;
+        if (l.icon) {
+          const img = s('image', { href: l.icon, x, y: Y(l.y) - 19, width: 15, height: 15 });
+          img.addEventListener('error', () => img.remove());
+          svg.append(img);
+          x += 18;
+        }
+        const tx = s('text', { x, y: Y(l.y) - 6, 'text-anchor': start ? 'start' : 'end', fill: c, 'font-size': 11, 'font-weight': 700, 'paint-order': 'stroke', stroke: 'rgba(0,0,0,.55)', 'stroke-width': 3 });
         tx.textContent = l.label;
         svg.append(tx);
       }

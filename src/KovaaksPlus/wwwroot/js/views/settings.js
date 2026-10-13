@@ -76,12 +76,95 @@ export async function render(page) {
         section('Data', [
           row('Kovaak\'s Plus data', 'Tags, names, presets, thumbnails, backups', h('button', { class: 'btn sm', onclick: () => call('app.openDataFolder') }, icon('folder'), 'Open')),
           row('Thumbnails & icons', 'media\\scenarios, media\\tags and media\\presets, one folder per item', h('button', { class: 'btn sm', onclick: () => call('media.openFolder') }, icon('folder'), 'Open')),
+          row('Clean up unused files', 'Find thumbnails, previews and icons nothing uses any more, and links to files that are gone', h('button', { class: 'btn sm', onclick: (e) => cleanUpMedia(e.currentTarget) }, icon('trash'), h('span', null, 'Scan'))),
+          row('Clean up automatically on launch', 'Each time the app starts, unused files go to the Recycle Bin and broken links are cleared', toggle(c.autoCleanMedia, (v) => set({ autoCleanMedia: v }))),
           row('KovaaK\'s stats folder', 'Where run CSVs are saved', h('button', { class: 'btn sm', onclick: () => call('app.reveal', { what: 'stats' }) }, icon('folder'), 'Open')),
           row('Re-run setup', 'Walk through first-time setup again', h('button', { class: 'btn sm', onclick: async () => { await saveConfig({ setupComplete: false }); location.reload(); } }, 'Run setup')),
         ]),
         h('div', { class: 'card pad small muted' },
           h('b', { style: { color: 'var(--text-2)' } }, 'Sharing with friends: '), 'send them ', h('b', null, 'KovaaksPlus.exe'), '. It finds KovaaK\'s, their workshop scenarios and their Steam account by itself. Your tags and presets travel separately as .kpack files.',
           h('div', { style: { marginTop: '10px' } }, 'Benchmark data from ', h('a', { href: '#', onclick: (e) => { e.preventDefault(); call('app.openUrl', { url: 'https://evxl.app' }); } }, 'evxl.app'), ' and KovaaK\'s. Kovaak\'s Plus never modifies the game, reads its memory, or touches your scenario files (except when you import a pack).')))));
+}
+
+const fmtBytes = (n) => n >= 1048576 ? (n / 1048576).toFixed(1) + ' MB' : n >= 1024 ? Math.round(n / 1024) + ' KB' : n + ' B';
+
+/** Scans the media folder for files nothing uses any more (replaced/removed thumbnails, previews, icons) and offers to recycle them. */
+async function cleanUpMedia(btn) {
+  btn.disabled = true;
+  const label = btn.lastChild.textContent;
+  btn.lastChild.textContent = 'Scanning…';
+  let scan;
+  try { scan = await call('media.scanUnused'); }
+  catch (e) { toast(e.message, 'error'); return; }
+  finally { btn.disabled = false; btn.lastChild.textContent = label; }
+
+  const files = scan.files.sort((a, b) => a.path.localeCompare(b.path));
+  if (!files.length && !scan.missing.length && !scan.emptyFolders) { toast(`Nothing to clean up: all ${scan.referenced} media files are in use.`, 'ok'); return; }
+
+  const chosen = new Set(files.map((f) => f.path));
+  let clearMissing = scan.missing.length > 0;
+  const summary = h('div', { class: 'small muted' });
+  const drawSummary = () => {
+    const bytes = files.filter((f) => chosen.has(f.path)).reduce((a, f) => a + f.size, 0);
+    summary.textContent = `${chosen.size} of ${files.length} file${files.length === 1 ? '' : 's'} selected · ${fmtBytes(bytes)}`;
+  };
+  const list = h('div', { class: 'clean-list' }, files.map((f) => {
+    const cb = h('input', { type: 'checkbox', checked: true });
+    cb.addEventListener('change', () => { cb.checked ? chosen.add(f.path) : chosen.delete(f.path); drawSummary(); });
+    const folder = f.path.includes('/') ? f.path.slice(0, f.path.lastIndexOf('/') + 1) : '';
+    return h('label', { class: 'clean-row' }, cb,
+      h('span', { class: 'ellipsis grow', title: f.path }, h('span', { class: 'muted' }, folder), f.path.slice(folder.length)),
+      h('span', { class: 'muted small num' }, fmtBytes(f.size)));
+  }));
+  drawSummary();
+  const missingBox = scan.missing.length ? h('label', { class: 'row', style: { alignItems: 'flex-start', gap: '10px' } },
+    (() => { const cb = h('input', { type: 'checkbox', checked: true, style: { marginTop: '3px' } }); cb.addEventListener('change', () => { clearMissing = cb.checked; }); return cb; })(),
+    h('div', null, h('b', null, `Also clear ${scan.missing.length} link${scan.missing.length === 1 ? '' : 's'} to files that no longer exist`),
+      h('div', { class: 'small muted' }, scan.missing.slice(0, 4).join(' · ') + (scan.missing.length > 4 ? ` · +${scan.missing.length - 4} more` : '')))) : null;
+
+  modal({
+    title: 'Clean up unused files', wide: true,
+    body: h('div', { class: 'col', style: { gap: '12px' } },
+      h('div', null, files.length
+        ? 'These media files aren\'t used by any scenario, tag or preset (usually thumbnails and previews you replaced or removed). They go to the Recycle Bin, so you can still restore them.'
+        : 'No unused media files.', scan.emptyFolders ? ` Empty folders (${scan.emptyFolders}) are removed too.` : ''),
+      files.length ? h('div', { class: 'row' }, summary, h('div', { class: 'grow' }),
+        h('button', { class: 'btn ghost sm', onclick: () => { const all = chosen.size !== files.length; list.querySelectorAll('input').forEach((cb, i) => { cb.checked = all; all ? chosen.add(files[i].path) : chosen.delete(files[i].path); }); drawSummary(); } }, 'Select all / none')) : null,
+      files.length ? list : null,
+      missingBox),
+    actions: [
+      { label: 'Cancel', kind: 'ghost' },
+      { label: 'Clean up', kind: 'danger', onClick: async () => {
+        try {
+          const r = await call('media.cleanUnused', { files: [...chosen], clearMissing });
+          const parts = [];
+          if (r.deleted) parts.push(`${r.deleted} file${r.deleted === 1 ? '' : 's'} (${fmtBytes(r.bytes)}) moved to the Recycle Bin`);
+          if (r.folders) parts.push(`${r.folders} empty folder${r.folders === 1 ? '' : 's'} removed`);
+          if (r.cleared) parts.push(`${r.cleared} broken link${r.cleared === 1 ? '' : 's'} cleared`);
+          if (r.skipped) parts.push(`${r.skipped} skipped (now in use or already gone)`);
+          toast(parts.join(' · ') || 'Nothing changed', 'ok');
+          if (r.cleared) await loadLibrary(true);
+        } catch (e) { toast(e.message, 'error'); return false; }
+      } },
+    ],
+  });
+}
+
+/**
+ * Launch-time version of the cleanup (App Settings → Data → Clean up automatically on launch): recycles every unused
+ * media file and clears links to missing files without asking, and only says something when it did anything.
+ */
+export async function autoCleanMedia() {
+  try {
+    const scan = await call('media.scanUnused');
+    if (!scan.files.length && !scan.missing.length && !scan.emptyFolders) return;
+    const r = await call('media.cleanUnused', { files: scan.files.map((f) => f.path), clearMissing: true });
+    const parts = [];
+    if (r.deleted) parts.push(`${r.deleted} unused file${r.deleted === 1 ? '' : 's'} (${fmtBytes(r.bytes)}) moved to the Recycle Bin`);
+    if (r.cleared) parts.push(`${r.cleared} broken link${r.cleared === 1 ? '' : 's'} cleared`);
+    if (parts.length) toast('Cleanup: ' + parts.join(' · '), 'ok');
+    if (r.cleared) await loadLibrary(true);
+  } catch { /* best effort; the manual Scan button reports errors */ }
 }
 
 const RESTART_KEYS = ['R', 'T', 'F', 'E', 'Q', 'G', 'X', 'Z', 'Space', 'Return', 'Back', 'F1', 'F2', 'F3', 'F4', 'F5', 'F6', 'F7', 'F8', 'F9', 'F10', 'F11', 'F12'];

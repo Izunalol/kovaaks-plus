@@ -1,0 +1,10 @@
+# Build output (rebuilt by build.ps1 / dotnet build)
+bin/
+obj/
+dist/
+
+# Editor and OS clutter
+.vs/
+.vscode/
+*.user
+Thumbs.db

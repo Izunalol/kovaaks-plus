@@ -3,6 +3,7 @@ import { call } from './rpc.js';
 import { h, icon, thumb, fmtScore, fmtPct, fmtDateTime, rankColor, rankImg } from './ui.js';
 import { state, scenario, primaryTagColor } from './state.js';
 import { lineChart } from './charts.js';
+import { loadThresholds, pickBenchmark, thresholdOverlay, thresholdPicker } from './thresholds.js';
 import { openScenario } from './drawer.js';
 import { play, nextInQueue } from './play.js';
 import { showRunDetail, runGraphs } from './runs.js';
@@ -123,10 +124,23 @@ export function showResults(d) {
   requestAnimationFrame(() => {
     if (hist.length > 1) {
       const best = Math.max(...hist.map((x) => x.score));
-      lineChart(chartHost, [{
+      const series = [{
         points: hist.map((x, i) => ({ x: i, y: x.score, pb: x.pb && i > 0, tip: `<b>${fmtScore(x.score)}</b> · ${fmtPct(x.accuracy)}<br><span class="muted">${fmtDateTime(x.date)}</span>`, onClick: () => showRunDetail(x.file, d.displayName) })),
         color: pb ? '#fbbf24' : 'var(--accent)', area: true, dots: true,
-      }], { height: 220, hLines: [{ y: best, label: 'PB ' + fmtScore(best) }], highlight: { index: hist.length - 1, color: pb ? '#fbbf24' : '#fff' } });
+      }];
+      const drawChart = (bench) => {
+        const ov = thresholdOverlay(bench, hist.map((x) => x.score));
+        chartHost.replaceChildren();
+        lineChart(chartHost, series, { height: 220, hLines: [...ov.hLines, { y: best, label: 'PB ' + fmtScore(best) }], bands: ov.bands, highlight: { index: hist.length - 1, color: pb ? '#fbbf24' : '#fff' } });
+      };
+      drawChart(null);
+      loadThresholds(r.scenario).then((list) => {
+        if (!el.isConnected) return;
+        const bench = pickBenchmark(list);
+        const picker = thresholdPicker(list, bench, drawChart);
+        if (picker) historyCard.querySelector('h3 .spacer').after(picker);
+        if (bench) drawChart(bench);
+      });
     } else historyCard.remove();
   });
 

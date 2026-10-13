@@ -3,6 +3,7 @@ import { call } from './rpc.js';
 import { h, icon, thumb, mediaUrl, isVideo, fmtScore, fmtPct, fmtDate, fmtDateTime, timeAgo, toast, tagChip, fileToDataUrl, runRowClass, dropZone } from './ui.js';
 import { state, scenario, tagById, patchScenario, primaryTagColor } from './state.js';
 import { lineChart, movingAverage } from './charts.js';
+import { loadThresholds, pickBenchmark, thresholdOverlay, thresholdPicker } from './thresholds.js';
 import { openTagPicker, tagMenu } from './tags.js';
 import { showRunDetail } from './runs.js';
 import { exportItems } from './views/packs.js';
@@ -154,10 +155,23 @@ function render(panel, d) {
     const ma = movingAverage(shown.map((r) => r.score), Math.min(10, Math.max(3, Math.floor(shown.length / 8))));
     const chartHost = h('div');
     historySec.append(chartHost);
-    requestAnimationFrame(() => lineChart(chartHost, [
+    const series = [
       { points: shown.map((r, i) => ({ x: i, y: r.score, pb: r.pb && i > 0, tip: `<b>${fmtScore(r.score)}</b> · ${fmtPct(r.accuracy)}<br><span class="muted">${fmtDateTime(r.date)}${r.pb ? ' · PB' : ''}</span>`, onClick: () => showRunDetail(r.file, meta.customName || d.name) })), color: '#5b6478', width: 1.4, dots: true },
       { points: shown.map((r, i) => ({ x: i, y: ma[i] })), color: 'var(--accent)', width: 2.6, dots: false },
-    ], { height: 210, hLines: [{ y: pb, label: 'PB ' + fmtScore(pb) }] }));
+    ];
+    // Benchmark rank lines (picker in the section header when the scenario is in a benchmark).
+    const drawChart = (bench) => {
+      const ov = thresholdOverlay(bench, shown.map((r) => r.score));
+      chartHost.replaceChildren();
+      lineChart(chartHost, series, { height: 210, hLines: [...ov.hLines, { y: pb, label: 'PB ' + fmtScore(pb) }], bands: ov.bands });
+    };
+    requestAnimationFrame(() => drawChart(null));
+    if ((d.benchmarks || []).length) loadThresholds(d.name).then((list) => {
+      const bench = pickBenchmark(list);
+      const picker = thresholdPicker(list, bench, drawChart);
+      if (picker) historySec.querySelector('h4 .spacer').after(picker);
+      if (bench) drawChart(bench);
+    });
   } else historySec.append(h('div', { class: 'muted small' }, runs.length ? 'Play a few more runs to see a trend.' : 'No runs recorded yet.'));
 
   const benchSec = d.benchmarks && d.benchmarks.length ? h('div', { class: 'drawer-section' }, h('h4', null, 'Part of benchmarks'),

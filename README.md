@@ -52,6 +52,7 @@ The queue is the list you launched from: a benchmark difficulty, a calculator pl
 ## Calculators
 
 - **Benchmark (Rank calculator card, collapsed by default; click its header):** pick a target rank, an energy, or a leaderboard position. It lists the cheapest set of improvements to get there, one scenario per weak subcategory, with exact scores and play buttons. Energy benchmarks raise your weakest subcategories first, because energy is a harmonic mean.
+- **Rank lines on score charts:** if a scenario belongs to a benchmark, its score history (side panel and results screen) shows that benchmark's rank thresholds as coloured lines and bands: the rank below your worst run, every rank inside your range, and the next one above your best. Use the picker above the chart to switch benchmark or turn the lines off; your choice is remembered.
 - **Scenario (details panel or right-click → Calculator):** enter a target score, a rank, or a leaderboard position / top %. It shows the score needed, the gain over your PB, the rank, and an estimated global position.
 
 ## Customising
@@ -84,6 +85,8 @@ All app data lives in `%APPDATA%\KovaaksPlus` and never inside the game's folder
 - `media\`: thumbnails, previews and tag icons, one folder per item (`media\scenarios\<scenario>\`, `media\tags\<tag>\`, `media\presets\<preset>\`). App Settings → Data → Thumbnails & icons opens it.
 - `backups\`: automatic snapshots of KovaaK's settings, taken before every change
 - `cache\`: stats index and benchmark data
+
+**Cleaning up:** replacing or removing a thumbnail leaves the old file in media\. App Settings → Data → **Clean up unused files** scans for files no scenario, tag or preset uses, lets you pick which to remove, and sends them to the Recycle Bin. It also removes empty folders, and can clear links to files that were deleted by hand. Turn on **Clean up automatically on launch** to do this quietly each time the app starts (off by default).
 
 Scenario files are never renamed or edited. The only time the app writes into KovaaK's folders:
 - **Applying settings or a preset.** It edits `PrimaryUserSettings.json`, `weaponsettings.ini` and `UI.json` after backing them up. If KovaaK's is running, the app closes it, applies the change and relaunches it, because the game rewrites these files on exit.

@@ -267,6 +267,10 @@ public sealed class Api
             case "media.openFolder":
                 Native.RevealInExplorer(AppPaths.Media);
                 return null;
+            case "media.scanUnused":
+                return ScanMedia();
+            case "media.cleanUnused":
+                return CleanMedia(Json.Get(p, "files", new List<string>()), Json.Get(p, "clearMissing", false));
             case "media.saveDataUrl":
             {
                 var m = Regex.Match(Json.Get(p, "dataUrl", ""), @"^data:(?<mime>[\w/+.-]+);base64,(?<data>.+)$", RegexOptions.Singleline);
@@ -405,6 +409,8 @@ public sealed class Api
                     groups = BenchmarkGroups(cat),
                 };
             }
+            case "bench.thresholds":
+                return await ScenarioThresholds(Json.Get(p, "name", ""));
             case "evxl.benchmark":
                 return await BenchmarkWithLocal(Json.Get(p, "id", 0), Json.Get(p, "refresh", false), Json.Get<string?>(p, "steamId", null));
 
@@ -503,6 +509,100 @@ public sealed class Api
         return full;
     }
 
+    // ---------- unused media cleanup ----------
+
+    /// <summary>Every media value still referenced (scenario/tag/preset thumbnails, previews, tag icons) → owner description.</summary>
+    Dictionary<string, string> MediaReferences()
+    {
+        var refs = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        void Add(string? rel, string owner)
+        {
+            if (string.IsNullOrWhiteSpace(rel) || rel.StartsWith("ic:")) return;
+            try { refs.TryAdd(MediaFull(rel), owner); } catch { /* invalid path: nothing on disk to keep */ }
+        }
+        foreach (var (name, m) in Library.Data.Scenarios) { Add(m.Thumbnail, $"Scenario \"{name}\" thumbnail"); Add(m.Preview, $"Scenario \"{name}\" preview"); }
+        foreach (var t in Library.Data.Tags) { Add(t.Thumbnail, $"Tag \"{t.Name}\" thumbnail"); Add(t.Icon, $"Tag \"{t.Name}\" icon"); }
+        foreach (var pr in Presets.List()) { Add(pr.Thumbnail, $"Preset \"{pr.Name}\" thumbnail"); Add(pr.Preview, $"Preset \"{pr.Name}\" preview"); }
+        return refs;
+    }
+
+    /// <summary>Lists media files nothing points to any more, and references whose file has gone missing.</summary>
+    object ScanMedia()
+    {
+        var refs = MediaReferences();
+        var root = Path.GetFullPath(AppPaths.Media);
+        var unused = new List<object>();
+        long bytes = 0;
+        foreach (var file in Directory.EnumerateFiles(root, "*", SearchOption.AllDirectories))
+        {
+            if (refs.ContainsKey(file)) continue;
+            var fi = new FileInfo(file);
+            bytes += fi.Length;
+            unused.Add(new { path = Path.GetRelativePath(root, file).Replace('\\', '/'), size = fi.Length, modified = fi.LastWriteTime });
+        }
+        var missing = refs.Where(kv => !File.Exists(kv.Key)).Select(kv => kv.Value).OrderBy(x => x).ToList();
+        int emptyFolders = Directory.EnumerateDirectories(root, "*", SearchOption.AllDirectories).Count(d => !Directory.EnumerateFileSystemEntries(d).Any());
+        return new { files = unused, totalBytes = bytes, missing, emptyFolders, referenced = refs.Count };
+    }
+
+    /// <summary>
+    /// Sends the chosen unused files to the Recycle Bin (re-checking that nothing references them now),
+    /// removes empty media folders, and optionally clears references to files that no longer exist.
+    /// </summary>
+    object CleanMedia(List<string> files, bool clearMissing)
+    {
+        var refs = MediaReferences();
+        int deleted = 0, skipped = 0;
+        long bytes = 0;
+        foreach (var rel in files)
+        {
+            string full;
+            try { full = MediaFull(rel); } catch { skipped++; continue; }
+            if (refs.ContainsKey(full) || !File.Exists(full)) { skipped++; continue; }
+            try
+            {
+                var len = new FileInfo(full).Length;
+                Microsoft.VisualBasic.FileIO.FileSystem.DeleteFile(full, Microsoft.VisualBasic.FileIO.UIOption.OnlyErrorDialogs, Microsoft.VisualBasic.FileIO.RecycleOption.SendToRecycleBin);
+                deleted++; bytes += len;
+            }
+            catch { skipped++; }
+        }
+
+        // Empty folders, deepest first (an item's folder disappears once its last file goes).
+        var root = Path.GetFullPath(AppPaths.Media);
+        int folders = 0;
+        foreach (var d in Directory.EnumerateDirectories(root, "*", SearchOption.AllDirectories).OrderByDescending(d => d.Length))
+            try { if (!Directory.EnumerateFileSystemEntries(d).Any()) { Directory.Delete(d); folders++; } } catch { }
+
+        int cleared = 0;
+        if (clearMissing)
+        {
+            bool Gone(string? rel)
+            {
+                if (string.IsNullOrWhiteSpace(rel) || rel.StartsWith("ic:")) return false;
+                try { return !File.Exists(MediaFull(rel)); } catch { return true; }
+            }
+            foreach (var m in Library.Data.Scenarios.Values)
+            {
+                if (Gone(m.Thumbnail)) { m.Thumbnail = null; cleared++; }
+                if (Gone(m.Preview)) { m.Preview = null; cleared++; }
+            }
+            foreach (var tg in Library.Data.Tags)
+            {
+                if (Gone(tg.Thumbnail)) { tg.Thumbnail = null; cleared++; }
+                if (Gone(tg.Icon)) { tg.Icon = null; cleared++; }
+            }
+            if (cleared > 0) Library.Save();
+            foreach (var pr in Presets.List())
+            {
+                bool changed = false;
+                if (Gone(pr.Thumbnail)) { pr.Thumbnail = null; changed = true; cleared++; }
+                if (Gone(pr.Preview)) { pr.Preview = null; changed = true; cleared++; }
+                if (changed) Presets.Save(pr);
+            }
+        }
+        return new { deleted, skipped, bytes, folders, cleared };
+    }
     SettingsManager RequireSettings() => _settings ?? throw new InvalidOperationException("Set up the KovaaK's folder first.");
 
     /// <summary>KovaaK's keeps settings in memory and rewrites them on exit, so edits must happen while it's closed.</summary>
@@ -993,6 +1093,35 @@ public sealed class Api
         if (Config.RunEndBringsApp) _form.BringToFrontForced();
     }
 
+    /// <summary>
+    /// Rank thresholds for a scenario in every benchmark that contains it (active/pinned benchmarks first),
+    /// for drawing rank lines on its score charts.
+    /// </summary>
+    async Task<List<object>> ScenarioThresholds(string scenario)
+    {
+        var list = new List<object>();
+        var membership = BenchmarkMembership().GetValueOrDefault(scenario);
+        if (membership == null) return list;
+        var ordered = membership.OrderBy(i => i == Config.ActiveBenchmark ? 0 : Config.PinnedBenchmarks.Contains(i) ? 1 : 2).ThenBy(i => i);
+        foreach (var id in ordered)
+        {
+            JsonObject b;
+            try { b = await Evxl.GetBenchmark(id, Config.SteamId, false); } catch { continue; }
+            var s = b["categories"]!.AsArray().SelectMany(c => c!["scenarios"]!.AsArray())
+                .FirstOrDefault(x => x!["name"]!.GetValue<string>().Equals(scenario, StringComparison.OrdinalIgnoreCase));
+            if (s?["rankMaxes"] is not JsonArray maxes || maxes.Count == 0) continue;
+            list.Add(new
+            {
+                id,
+                name = b["name"]?.GetValue<string>(),
+                difficulty = b["difficulty"]?.GetValue<string>(),
+                rankNames = b["rankNames"]?.DeepClone(),
+                ranks = b["ranks"]?.DeepClone(),
+                rankMaxes = maxes.DeepClone(),
+            });
+        }
+        return list;
+    }
     /// <summary>Finds the scenario in a pinned (or any cached) benchmark and computes rank before/after this run.</summary>
     async Task<object?> RankInfo(string scenario, double score, double? previous)
     {

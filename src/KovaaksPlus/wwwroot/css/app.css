@@ -700,3 +700,8 @@ table.evx-table { width: 100%; border-collapse: collapse; }
 .hover-pop .hp-media > .thumb { width: 100%; height: 100%; aspect-ratio: auto; border-radius: 0; }
 .hover-pop .hp-body { padding: 8px 12px 10px; }
 .hover-pop .hp-name { font-weight: 700; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+/* Benchmark rank-line picker on score charts */
+.thr-pick { height: 26px; font-size: 12px; padding: 0 6px; max-width: 220px; margin-right: 8px; text-transform: none; letter-spacing: 0; font-weight: 500; }
+.clean-list { max-height: 320px; overflow-y: auto; border: 1px solid var(--border); border-radius: var(--radius-sm, 8px); padding: 4px; }
+.clean-row { display: flex; align-items: center; gap: 10px; padding: 6px 8px; border-radius: 6px; cursor: pointer; font-size: 13px; }
+.clean-row:hover { background: var(--surface-2); }

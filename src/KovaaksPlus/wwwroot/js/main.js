@@ -13,6 +13,7 @@ import * as packs from './views/packs.js';
 import { importFromFile } from './views/packs.js';
 import { clearViewedPlayer } from './viewing.js';
 import * as settings from './views/settings.js';
+import { autoCleanMedia } from './views/settings.js';
 
 const ROUTES = [
   { id: 'home', label: 'Home', icon: 'home', view: home },
@@ -169,6 +170,8 @@ async function boot() {
     showSetup(() => { loadLibrary(true).catch(() => { }); route(); });
   } else {
     loadLibrary().catch(() => { });
+    // Optional launch cleanup, a little after start-up so it never slows the first screen.
+    if (state.config.autoCleanMedia) setTimeout(autoCleanMedia, 4000);
   }
   route();
 }
